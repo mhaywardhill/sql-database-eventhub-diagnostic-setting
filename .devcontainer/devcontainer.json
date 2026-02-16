@@ -1,0 +1,4 @@
+{
+  "name": "sql-database-eventhub-diagnostic-setting",
+  "postCreateCommand": "bash .devcontainer/post-create.sh"
+}

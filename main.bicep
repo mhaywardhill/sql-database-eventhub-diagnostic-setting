@@ -67,33 +67,19 @@ resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
   properties: {
     publicNetworkAccess: 'Enabled'
     minimalTlsVersion: '1.2'
+    administrators: {
+      administratorType: 'ActiveDirectory'
+      login: entraAdministratorLogin
+      sid: entraAdministratorObjectId
+      tenantId: entraAdministratorTenantId
+      azureADOnlyAuthentication: true
+    }
   }
-}
-
-resource sqlServerEntraAdmin 'Microsoft.Sql/servers/administrators@2023-08-01-preview' = {
-  name: 'ActiveDirectory'
-  parent: sqlServer
-  properties: {
-    administratorType: 'ActiveDirectory'
-    login: entraAdministratorLogin
-    sid: entraAdministratorObjectId
-    tenantId: entraAdministratorTenantId
-  }
-}
-
-resource sqlServerEntraOnlyAuth 'Microsoft.Sql/servers/azureADOnlyAuthentications@2023-08-01-preview' = {
-  name: 'Default'
-  parent: sqlServer
-  properties: {
-    azureADOnlyAuthentication: true
-  }
-  dependsOn: [
-    sqlServerEntraAdmin
-  ]
 }
 
 resource sqlDatabase 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
-  name: '${sqlServer.name}/${sqlDatabaseName}'
+  name: sqlDatabaseName
+  parent: sqlServer
   location: location
   sku: {
     name: sqlDatabaseSkuName
@@ -101,9 +87,6 @@ resource sqlDatabase 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
   properties: {
     collation: 'SQL_Latin1_General_CP1_CI_AS'
   }
-  dependsOn: [
-    sqlServerEntraOnlyAuth
-  ]
 }
 
 resource eventHubNamespace 'Microsoft.EventHub/namespaces@2022-10-01-preview' = {
@@ -141,13 +124,13 @@ resource sqlDatabaseDiagnosticSetting 'Microsoft.Insights/diagnosticSettings@202
   properties: {
     eventHubAuthorizationRuleId: eventHubNamespaceAuthorizationRule.id
     eventHubName: eventHub.name
-    logs: [
+    logs: []
+    metrics: [
       {
         category: 'InstanceAndAppAdvanced'
         enabled: true
       }
     ]
-    metrics: []
   }
 }
 

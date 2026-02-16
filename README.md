@@ -1,6 +1,8 @@
 # SQL Database to Event Hub Diagnostic Setting
 
-This repository provides a Bicep template that deploys an Azure SQL Server and Database in UK South, configures Entra-only authentication, and sends SQL database diagnostic logs (`InstanceAndAppAdvanced`) to Event Hub.
+This repository provides a Bicep template that deploys an Azure SQL Server and Database in UK South, configures Entra-only authentication, and sends only the SQL database diagnostic metric category (`InstanceAndAppAdvanced`) to Event Hub.
+
+Deployment in this repo is **resource-group scoped** (`az deployment group create`).
 
 ## What gets deployed
 
@@ -17,7 +19,7 @@ flowchart LR
     subgraph UKS[Azure Region: UK South]
         A[Azure SQL Server]
         B[Azure SQL Database]
-        C[Diagnostic Setting\nCategory: InstanceAndAppAdvanced]
+        C[Diagnostic Setting\nMetric Category: InstanceAndAppAdvanced]
         D[Event Hub Namespace]
         E[Event Hub]
         F[Authorization Rule\nRights: Send]
@@ -27,7 +29,7 @@ flowchart LR
     G --> A
     A --> B
     B --> C
-    C -->|publish logs| E
+    C -->|publish metrics| E
     F -->|auth for diagnostics| C
     D --> E
 ```
@@ -35,24 +37,44 @@ flowchart LR
 ## Prerequisites
 
 - Azure CLI logged in (`az login`)
-- Existing resource group in UK South
+- Subscription where you can create resource groups
 - Permission to assign SQL Entra admin and create Event Hub resources
+
+## Codespaces
+
+- This repo includes a dev container config at `.devcontainer/devcontainer.json`.
+- On Codespace create/rebuild, `.devcontainer/post-create.sh` installs Azure CLI (`az`) automatically.
+- If you already have an open Codespace, run **Rebuild Container** to apply it.
 
 ## Deploy
 
 Run from this repository folder:
 
 ```bash
+export AZURE_LOCATION="uksouth"
 export RG_NAME="<your-resource-group>"
-export ENTRA_ADMIN_LOGIN="<admin-upn-or-display-name>"
 export ENTRA_ADMIN_OBJECT_ID="<entra-object-id-guid>"
+export ENTRA_ADMIN_LOGIN="<admin-upn-or-display-name>"
+
+# Optional: override tenant used for SQL Entra admin assignment
+# export ENTRA_ADMIN_TENANT_ID="<tenant-guid>"
+
+./deploy.sh
+```
+
+Equivalent manual commands:
+
+```bash
+az group create --name "$RG_NAME" --location "$AZURE_LOCATION"
 
 az deployment group create \
-  --resource-group "$RG_NAME" \
-  --template-file main.bicep \
-  --parameters \
-    entraAdministratorLogin="$ENTRA_ADMIN_LOGIN" \
-    entraAdministratorObjectId="$ENTRA_ADMIN_OBJECT_ID"
+    --resource-group "$RG_NAME" \
+    --template-file main.bicep \
+    --parameters \
+        location="$AZURE_LOCATION" \
+        entraAdministratorLogin="$ENTRA_ADMIN_LOGIN" \
+        entraAdministratorObjectId="$ENTRA_ADMIN_OBJECT_ID" \
+        entraAdministratorTenantId="$ENTRA_ADMIN_TENANT_ID"
 ```
 
 ## Parameters
@@ -76,5 +98,14 @@ az deployment group create \
 ## Notes
 
 - SQL authentication is disabled (`azureADOnlyAuthentication = true`).
-- Diagnostic category is set to `InstanceAndAppAdvanced`.
+- Diagnostic metric category is set to `InstanceAndAppAdvanced`.
 - Event Hub resources are created and wired automatically by the template.
+
+## Troubleshooting
+
+- Error: `Invalid value given for parameter Login` on `Microsoft.Sql/servers/administrators`
+    - Cause: `entraAdministratorLogin` does not match the Microsoft Entra object, or tenant is incorrect.
+    - Fix: use one of these values:
+        - User: UPN (for example `alice@contoso.com`)
+        - Group: display name
+    - Tip: if the object is in a different tenant than your current CLI context, set `ENTRA_ADMIN_TENANT_ID` explicitly.
