@@ -101,6 +101,45 @@ az deployment group create \
 - Diagnostic metric category is set to `InstanceAndAppAdvanced`.
 - Event Hub resources are created and wired automatically by the template.
 
+## Verify data is arriving in Event Hub
+
+After deployment, generate some SQL activity, then check Event Hub ingress metrics.
+
+Find `event-hub-resource-id` (from deployment outputs):
+
+```bash
+export DEPLOYMENT_NAME="$(az deployment group list -g "$RG_NAME" --query "[0].name" -o tsv)"
+export EVENT_HUB_RESOURCE_ID="$(az deployment group show \
+    -g "$RG_NAME" \
+    -n "$DEPLOYMENT_NAME" \
+    --query "properties.outputs.eventHubResourceId.value" \
+    -o tsv)"
+
+echo "$EVENT_HUB_RESOURCE_ID"
+```
+
+Alternative lookup (resource query):
+
+```bash
+az resource list \
+    --resource-group "$RG_NAME" \
+    --query "[?type=='Microsoft.EventHub/namespaces/eventhubs'].id | [0]" \
+    --output tsv
+```
+
+Query incoming Event Hub metrics:
+
+```bash
+az monitor metrics list \
+    --resource "$EVENT_HUB_RESOURCE_ID" \
+    --metric "IncomingMessages" "IncomingBytes" \
+    --interval PT1M \
+    --aggregation Total \
+    --output table
+```
+
+If `IncomingMessages` and `IncomingBytes` are increasing, diagnostics are being written to Event Hub.
+
 ## Troubleshooting
 
 - Error: `Invalid value given for parameter Login` on `Microsoft.Sql/servers/administrators`
