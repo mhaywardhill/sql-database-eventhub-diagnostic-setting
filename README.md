@@ -1,0 +1,1 @@
+# sql-database-eventhub-diagnostic-setting
