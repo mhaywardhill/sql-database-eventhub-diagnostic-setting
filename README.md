@@ -97,16 +97,19 @@ az deployment group create \
 
 ## Verify
 
-After deploying, confirm that diagnostics are flowing into Event Hub.
+After deployment, generate some SQL activity, then check Event Hub ingress metrics.
 
-Metrics must be queried at the **namespace** level (`Microsoft.EventHub/namespaces`), not the individual Event Hub entity.
+> **Important:** Metrics must be queried at the **namespace** level (`Microsoft.EventHub/namespaces`), not the individual Event Hub entity (`Microsoft.EventHub/namespaces/eventhubs`).
 
 ```bash
-# Get the namespace resource ID from deployment outputs
-EVENT_HUB_NS_RESOURCE_ID=$(az deployment group show \
-    --resource-group "$RG_NAME" \
-    --name "<deployment-name>" \
-    --query properties.outputs.eventHubNamespaceResourceId.value -o tsv)
+# Get the deployment name and namespace resource ID
+export DEPLOYMENT_NAME="$(az deployment group list -g "$RG_NAME" --query "[0].name" -o tsv)"
+
+export EVENT_HUB_NS_RESOURCE_ID="$(az deployment group show \
+    -g "$RG_NAME" \
+    -n "$DEPLOYMENT_NAME" \
+    --query "properties.outputs.eventHubNamespaceResourceId.value" \
+    -o tsv)"
 
 # Query incoming messages and bytes
 az monitor metrics list \
@@ -117,6 +120,8 @@ az monitor metrics list \
     --output table
 ```
 
+If `IncomingMessages` and `IncomingBytes` are increasing, diagnostics are being written to Event Hub.
+
 > **Note:** Diagnostic metrics may take a few minutes to appear after deployment. Generate some SQL database activity (e.g. run queries) if the counters remain at zero.
 
 ## Notes
@@ -124,45 +129,6 @@ az monitor metrics list \
 - SQL authentication is disabled (`azureADOnlyAuthentication = true`).
 - Diagnostic metric category is set to `InstanceAndAppAdvanced`.
 - Event Hub resources are created and wired automatically by the template.
-
-## Verify data is arriving in Event Hub
-
-After deployment, generate some SQL activity, then check Event Hub ingress metrics.
-
-Find `event-hub-resource-id` (from deployment outputs):
-
-```bash
-export DEPLOYMENT_NAME="$(az deployment group list -g "$RG_NAME" --query "[0].name" -o tsv)"
-export EVENT_HUB_RESOURCE_ID="$(az deployment group show \
-    -g "$RG_NAME" \
-    -n "$DEPLOYMENT_NAME" \
-    --query "properties.outputs.eventHubResourceId.value" \
-    -o tsv)"
-
-echo "$EVENT_HUB_RESOURCE_ID"
-```
-
-Alternative lookup (resource query):
-
-```bash
-az resource list \
-    --resource-group "$RG_NAME" \
-    --query "[?type=='Microsoft.EventHub/namespaces/eventhubs'].id | [0]" \
-    --output tsv
-```
-
-Query incoming Event Hub metrics:
-
-```bash
-az monitor metrics list \
-    --resource "$EVENT_HUB_RESOURCE_ID" \
-    --metric "IncomingMessages" "IncomingBytes" \
-    --interval PT1M \
-    --aggregation Total \
-    --output table
-```
-
-If `IncomingMessages` and `IncomingBytes` are increasing, diagnostics are being written to Event Hub.
 
 ## Troubleshooting
 
