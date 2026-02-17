@@ -95,6 +95,30 @@ az deployment group create \
 - `eventHubAuthorizationRuleName` (default: `sql-diag-send`)
 - `diagnosticSettingName` (default: `sql-db-diag-to-eventhub`)
 
+## Verify
+
+After deploying, confirm that diagnostics are flowing into Event Hub.
+
+Metrics must be queried at the **namespace** level (`Microsoft.EventHub/namespaces`), not the individual Event Hub entity.
+
+```bash
+# Get the namespace resource ID from deployment outputs
+EVENT_HUB_NS_RESOURCE_ID=$(az deployment group show \
+    --resource-group "$RG_NAME" \
+    --name "<deployment-name>" \
+    --query properties.outputs.eventHubNamespaceResourceId.value -o tsv)
+
+# Query incoming messages and bytes
+az monitor metrics list \
+    --resource "$EVENT_HUB_NS_RESOURCE_ID" \
+    --metric "IncomingMessages" "IncomingBytes" \
+    --interval PT1M \
+    --aggregation Total \
+    --output table
+```
+
+> **Note:** Diagnostic metrics may take a few minutes to appear after deployment. Generate some SQL database activity (e.g. run queries) if the counters remain at zero.
+
 ## Notes
 
 - SQL authentication is disabled (`azureADOnlyAuthentication = true`).
