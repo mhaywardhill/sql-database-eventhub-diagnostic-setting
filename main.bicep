@@ -127,6 +127,10 @@ resource sqlDatabaseDiagnosticSetting 'Microsoft.Insights/diagnosticSettings@202
     logs: []
     metrics: [
       {
+        category: 'Basic'
+        enabled: true
+      }
+      {
         category: 'InstanceAndAppAdvanced'
         enabled: true
       }
