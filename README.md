@@ -1,6 +1,8 @@
 # SQL Database to Event Hub Diagnostic Setting
 
-This repository provides a Bicep template that deploys an Azure SQL Server and Database in UK South, configures Entra-only authentication, and sends only the SQL database diagnostic metric category (`InstanceAndAppAdvanced`) to Event Hub.
+This repository provides a Bicep template that deploys an Azure SQL Server and Database in UK South, configures Entra-only authentication, and streams SQL database diagnostic metrics to Event Hub.
+
+It also includes a Python script (`format_events.py`) that formats raw Event Hub JSON events into a readable table and can compare two event files to show which metrics were added or removed (e.g. when switching from `Basic` to `InstanceAndAppAdvanced`).
 
 Deployment in this repo is **resource-group scoped** (`az deployment group create`).
 
@@ -19,7 +21,7 @@ flowchart LR
     subgraph UKS[Azure Region: UK South]
         A[Azure SQL Server]
         B[Azure SQL Database]
-        C[Diagnostic Setting\nMetric Category: InstanceAndAppAdvanced]
+        C[Diagnostic Setting\nMetric Categories: configurable]
         D[Event Hub Namespace]
         E[Event Hub]
         F[Authorization Rule\nRights: Send]
@@ -93,6 +95,7 @@ az deployment group create \
 - `eventHubPartitionCount` (default: `2`)
 - `eventHubMessageRetentionInDays` (default: `1`)
 - `eventHubAuthorizationRuleName` (default: `sql-diag-send`)
+- `metricCategories` (default: `['Basic']`; allowed: `Basic`, `InstanceAndAppAdvanced`, `WorkloadManagement`) — array of diagnostic metric categories to stream
 - `diagnosticSettingName` (default: `sql-db-diag-to-eventhub`)
 
 ## Verify
@@ -124,10 +127,133 @@ If `IncomingMessages` and `IncomingBytes` are increasing, diagnostics are being 
 
 > **Note:** Diagnostic metrics may take a few minutes to appear after deployment. Generate some SQL database activity (e.g. run queries) if the counters remain at zero.
 
+## Format and compare events
+
+Raw Event Hub JSON is difficult to read. Use `format_events.py` to display metrics in a readable table. The script can read directly from Event Hub or from saved JSON files.
+
+### Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### Read directly from Event Hub
+
+Using `DefaultAzureCredential` (works with `az login`, managed identity, etc.):
+
+```bash
+python format_events.py \
+    --eventhub-namespace <your-namespace> \
+    --eventhub-name sql-db-diagnostics
+```
+
+Or with a connection string (from the `sql-diag-listen` rule created by the template):
+
+```bash
+python format_events.py \
+    --connection-string "Endpoint=sb://..." \
+    --eventhub-name sql-db-diagnostics
+```
+
+### Read from Event Hub and save to a file
+
+```bash
+python format_events.py \
+    --eventhub-namespace <your-namespace> \
+    --eventhub-name sql-db-diagnostics \
+    --save basic_events.json
+```
+
+### Pretty-print a saved events file
+
+```bash
+python format_events.py --file basic_events.json
+```
+
+Sample output:
+
+```
+════════════════════════════════════════════════════════════════════════════════
+  Formatted events — basic_events.json
+════════════════════════════════════════════════════════════════════════════════
+
+  Database: SQL-IN53KVSY7MHTE/SQLDB-APP
+  ────────────────────────────────────────────────────────────────────────────
+  Metric                                    Avg @20:39  Avg @20:40  Avg @20:41
+  ────────────────────────────────────────────────────────────────────────────
+  Availability (availability)                      100         100         100
+  CPU Percentage (cpu_percent)                       0           0           0
+  DTU Limit (dtu_limit)                             10          10          10
+  ...
+```
+
+### Compare Basic vs InstanceAndAppAdvanced
+
+1. Deploy with `Basic` (default), read events and save:
+   ```bash
+   python format_events.py \
+       --eventhub-namespace <your-namespace> \
+       --eventhub-name sql-db-diagnostics \
+       --save basic_events.json
+   ```
+
+2. Redeploy with `InstanceAndAppAdvanced`, read events and save:
+   ```bash
+   python format_events.py \
+       --eventhub-namespace <your-namespace> \
+       --eventhub-name sql-db-diagnostics \
+       --save advanced_events.json
+   ```
+
+3. Compare the two files:
+   ```bash
+   python format_events.py --compare basic_events.json advanced_events.json
+   ```
+
+Sample output:
+
+```
+════════════════════════════════════════════════════════════════════════════════
+  Metric Comparison: basic_events.json  →  advanced_events.json
+════════════════════════════════════════════════════════════════════════════════
+
+  Metrics in BOTH files (14):
+    • allocated_data_storage                    Allocated Data Storage (bytes)
+    • cpu_percent                               CPU Percentage
+    ...
+
+  NEW metrics in advanced_events.json (8):
+    + connection_failed                          Failed Connections
+    + connection_successful                      Successful Connections
+    + deadlock                                   Deadlocks
+    ...
+
+  Summary
+  ───────
+    basic_events.json: 14 metrics
+    advanced_events.json: 22 metrics
+    Added:   8
+    Removed: 0
+```
+
+### Switch metric categories in the deployment
+
+To deploy with both `Basic` and `InstanceAndAppAdvanced`:
+
+```bash
+az deployment group create \
+    --resource-group "$RG_NAME" \
+    --template-file main.bicep \
+    --parameters \
+        entraAdministratorLogin="$ENTRA_ADMIN_LOGIN" \
+        entraAdministratorObjectId="$ENTRA_ADMIN_OBJECT_ID" \
+        metricCategories="['Basic','InstanceAndAppAdvanced']"
+```
+
 ## Notes
 
 - SQL authentication is disabled (`azureADOnlyAuthentication = true`).
-- Diagnostic metric category is set to `InstanceAndAppAdvanced`.
+- Default diagnostic metric category is `Basic`. Change via the `metricCategories` parameter.
 - Event Hub resources are created and wired automatically by the template.
 
 ## Troubleshooting

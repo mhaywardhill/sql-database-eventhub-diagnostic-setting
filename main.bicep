@@ -58,6 +58,14 @@ param eventHubMessageRetentionInDays int = 1
 @description('Namespace-level authorization rule name used by SQL diagnostic settings to publish to Event Hub.')
 param eventHubAuthorizationRuleName string = 'sql-diag-send'
 
+@description('Metric categories to enable on the database diagnostic setting.')
+@allowed([
+  'Basic'
+  'InstanceAndAppAdvanced'
+  'WorkloadManagement'
+])
+param metricCategories array = ['Basic']
+
 @description('Name of the database diagnostic setting.')
 param diagnosticSettingName string = 'sql-db-diag-to-eventhub'
 
@@ -118,6 +126,16 @@ resource eventHubNamespaceAuthorizationRule 'Microsoft.EventHub/namespaces/Autho
   }
 }
 
+resource eventHubListenRule 'Microsoft.EventHub/namespaces/AuthorizationRules@2022-10-01-preview' = {
+  name: 'sql-diag-listen'
+  parent: eventHubNamespace
+  properties: {
+    rights: [
+      'Listen'
+    ]
+  }
+}
+
 resource sqlDatabaseDiagnosticSetting 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   name: diagnosticSettingName
   scope: sqlDatabase
@@ -125,16 +143,10 @@ resource sqlDatabaseDiagnosticSetting 'Microsoft.Insights/diagnosticSettings@202
     eventHubAuthorizationRuleId: eventHubNamespaceAuthorizationRule.id
     eventHubName: eventHub.name
     logs: []
-    metrics: [
-      {
-        category: 'Basic'
-        enabled: true
-      }
-      {
-        category: 'InstanceAndAppAdvanced'
-        enabled: true
-      }
-    ]
+    metrics: [for category in metricCategories: {
+      category: category
+      enabled: true
+    }]
   }
 }
 
@@ -143,4 +155,5 @@ output sqlDatabaseResourceId string = sqlDatabase.id
 output eventHubNamespaceResourceId string = eventHubNamespace.id
 output eventHubResourceId string = eventHub.id
 output eventHubAuthorizationRuleResourceId string = eventHubNamespaceAuthorizationRule.id
+output eventHubListenRuleResourceId string = eventHubListenRule.id
 output diagnosticSettingResourceId string = sqlDatabaseDiagnosticSetting.id
