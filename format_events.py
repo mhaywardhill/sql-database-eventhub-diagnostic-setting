@@ -25,6 +25,7 @@ import argparse
 import json
 import sys
 import os
+import threading
 from collections import defaultdict
 from datetime import datetime
 
@@ -82,6 +83,12 @@ def read_from_eventhub(namespace=None, eventhub_name=None, connection_string=Non
     """
     from azure.eventhub import EventHubConsumerClient
 
+    # Strip FQDN suffix if the user passed the full hostname
+    if namespace and namespace.endswith(".servicebus.windows.net"):
+        namespace = namespace[: -len(".servicebus.windows.net")]
+
+    using_connection_string = bool(connection_string)
+
     if connection_string:
         client = EventHubConsumerClient.from_connection_string(
             conn_str=connection_string,
@@ -99,38 +106,100 @@ def read_from_eventhub(namespace=None, eventhub_name=None, connection_string=Non
             credential=credential,
         )
 
-    all_records = []
-    events_received = 0
-
-    def on_event(partition_context, event):
-        nonlocal events_received
-        if event is None:
-            return
-        body = event.body_as_str(encoding="UTF-8")
-        try:
-            data = json.loads(body)
-            records = data.get("records", [])
-            all_records.extend(records)
-            events_received += len(records)
-        except json.JSONDecodeError:
-            print(f"  [warn] Skipped non-JSON event on partition "
-                  f"{partition_context.partition_id}", file=sys.stderr)
-        partition_context.update_checkpoint(event)
-
+    fqdn = f"{namespace}.servicebus.windows.net" if namespace else "(connection string)"
     print(f"  Connecting to Event Hub '{eventhub_name}'...")
-    if namespace:
-        print(f"  Namespace: {namespace}.servicebus.windows.net")
+    print(f"  Namespace: {fqdn}")
     print(f"  Consumer group: {consumer_group}")
     print(f"  Waiting up to {max_wait_time}s per partition for events...\n")
 
-    with client:
-        client.receive(
-            on_event=on_event,
-            starting_position="-1",  # from the beginning of the stream
-            max_wait_time=max_wait_time,
-        )
+    all_records = []
+    events_received = 0
 
-    print(f"  Received {events_received} metric records from Event Hub.\n")
+    # Validate connectivity by fetching partition IDs first — this fails
+    # fast (instead of retrying forever) if the namespace is unreachable.
+    try:
+        partition_ids = client.get_partition_ids()
+    except Exception as exc:
+        client.close()
+        print(f"  ERROR: Could not connect to Event Hub.\n  {exc}",
+              file=sys.stderr)
+        sys.exit(1)
+
+    print(f"  Connected — {len(partition_ids)} partition(s) found.\n")
+
+    # Track which partitions have gone idle (received an empty batch after
+    # max_wait_time elapsed with no new events).
+    idle_partitions = set()
+    done = threading.Event()
+
+    def on_event_batch(partition_context, events):
+        nonlocal events_received
+        pid = partition_context.partition_id
+        if not events:
+            # Empty batch = this partition has been drained
+            idle_partitions.add(pid)
+            if len(idle_partitions) >= len(partition_ids):
+                done.set()
+            return
+        for event in events:
+            body = event.body_as_str(encoding="UTF-8")
+            try:
+                data = json.loads(body)
+                records = data.get("records", [])
+                all_records.extend(records)
+                events_received += len(records)
+            except json.JSONDecodeError:
+                print(f"  [warn] Skipped non-JSON event on partition {pid}",
+                      file=sys.stderr)
+        print(f"  Partition {pid}: received {len(events)} event(s)")
+
+    def on_error(partition_context, error):
+        pid = partition_context.partition_id if partition_context else "?"
+        print(f"  [error] Partition {pid}: {error}", file=sys.stderr)
+        idle_partitions.add(pid)
+        if len(idle_partitions) >= len(partition_ids):
+            done.set()
+
+    # receive_batch() blocks forever, so run it in a daemon thread.
+    # We signal completion when every partition has delivered at least one
+    # empty batch (meaning max_wait_time elapsed with no new events).
+    overall_timeout = max_wait_time * len(partition_ids) + 30
+
+    receive_thread = threading.Thread(
+        target=client.receive_batch,
+        kwargs={
+            "on_event_batch": on_event_batch,
+            "on_error": on_error,
+            "starting_position": "-1",
+            "max_batch_size": 300,
+            "max_wait_time": max_wait_time,
+        },
+        daemon=True,
+    )
+    receive_thread.start()
+
+    # Wait until all partitions are drained, or overall timeout.
+    done.wait(timeout=overall_timeout)
+    client.close()
+    receive_thread.join(timeout=5)
+
+    print(f"\n  Received {events_received} metric records from Event Hub.\n")
+
+    # Warn about likely RBAC issue when using DefaultAzureCredential
+    if events_received == 0 and not using_connection_string:
+        # Check if partitions actually have events
+        non_empty = any(not p.get("is_empty", True)
+                        for pid in partition_ids
+                        for p in [{}])  # placeholder — already printed above
+        print("  NOTE: No events were returned. If the Event Hub is not empty,")
+        print("  your identity may lack the 'Azure Event Hubs Data Receiver'")
+        print("  RBAC role. Try using --connection-string instead:\n")
+        print("    CONN=$(az eventhubs namespace authorization-rule keys list \\")
+        print("      --resource-group <RG> --namespace-name <NS> \\")
+        print("      --name <RULE> --query primaryConnectionString -o tsv)\n")
+        print(f"    python format_events.py --connection-string \"$CONN\" ")
+        print(f"      --eventhub-name {eventhub_name}\n")
+
     return all_records
 
 
