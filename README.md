@@ -129,7 +129,7 @@ If `IncomingMessages` and `IncomingBytes` are increasing, diagnostics are being 
 
 ## Format and compare events
 
-Raw Event Hub JSON is difficult to read. Use `format_events.py` to display metrics in a readable table. The script can read directly from Event Hub or from saved JSON files.
+Raw Event Hub JSON is difficult to read. Use `format_events.py` to display metrics in a readable summary table. The script can read directly from Event Hub or from saved JSON files.
 
 ### Install dependencies
 
@@ -139,19 +139,26 @@ pip install -r requirements.txt
 
 ### Read directly from Event Hub
 
-Using `DefaultAzureCredential` (works with `az login`, managed identity, etc.):
+Use a connection string from the `sql-diag-listen` authorization rule created by the template:
+
+```bash
+# Get the Listen connection string
+CONN=$(az eventhubs namespace authorization-rule keys list \
+    --resource-group "$RG_NAME" \
+    --namespace-name "<your-namespace>" \
+    --name sql-diag-listen \
+    --query primaryConnectionString -o tsv)
+
+python format_events.py \
+    --connection-string "$CONN" \
+    --eventhub-name sql-db-diagnostics
+```
+
+Alternatively, with `DefaultAzureCredential` (requires the **Azure Event Hubs Data Receiver** RBAC role):
 
 ```bash
 python format_events.py \
     --eventhub-namespace <your-namespace> \
-    --eventhub-name sql-db-diagnostics
-```
-
-Or with a connection string (from the `sql-diag-listen` rule created by the template):
-
-```bash
-python format_events.py \
-    --connection-string "Endpoint=sb://..." \
     --eventhub-name sql-db-diagnostics
 ```
 
@@ -159,7 +166,7 @@ python format_events.py \
 
 ```bash
 python format_events.py \
-    --eventhub-namespace <your-namespace> \
+    --connection-string "$CONN" \
     --eventhub-name sql-db-diagnostics \
     --save basic_events.json
 ```
@@ -178,12 +185,15 @@ Sample output:
 ════════════════════════════════════════════════════════════════════════════════
 
   Database: SQL-IN53KVSY7MHTE/SQLDB-APP
+  Time range: 08:42 – 09:23  (42 sample(s))
   ────────────────────────────────────────────────────────────────────────────
-  Metric                                    Avg @20:39  Avg @20:40  Avg @20:41
+  Metric                                 Count     Min     Max     Avg  Latest
   ────────────────────────────────────────────────────────────────────────────
-  Availability (availability)                      100         100         100
-  CPU Percentage (cpu_percent)                       0           0           0
-  DTU Limit (dtu_limit)                             10          10          10
+  Storage (Storage)                         40    3.9M   21.6M   15.1M   21.6M
+  Allocated Data Storage (bytes) (all…      40   16.8M   33.6M   27.5M   33.6M
+  Availability (availability)               42     100     100     100     100
+  CPU Percentage (cpu_percent)              39       0       1    0.03       0
+  DTU Limit (dtu_limit)                     40       0      10    8.62      10
   ...
 ```
 
@@ -192,7 +202,7 @@ Sample output:
 1. Deploy with `Basic` (default), read events and save:
    ```bash
    python format_events.py \
-       --eventhub-namespace <your-namespace> \
+       --connection-string "$CONN" \
        --eventhub-name sql-db-diagnostics \
        --save basic_events.json
    ```
@@ -200,7 +210,7 @@ Sample output:
 2. Redeploy with `InstanceAndAppAdvanced`, read events and save:
    ```bash
    python format_events.py \
-       --eventhub-namespace <your-namespace> \
+       --connection-string "$CONN" \
        --eventhub-name sql-db-diagnostics \
        --save advanced_events.json
    ```

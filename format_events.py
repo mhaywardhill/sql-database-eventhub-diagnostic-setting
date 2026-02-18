@@ -236,15 +236,30 @@ def format_value(value):
     """Human-friendly number formatting."""
     if value is None:
         return "—"
-    if isinstance(value, float):
-        if value == int(value):
-            return f"{int(value):,}"
-        return f"{value:,.4f}"
-    return f"{value:,}"
+    if isinstance(value, (int, float)):
+        v = float(value)
+        abs_v = abs(v)
+        # Large numbers → human-readable suffixes
+        if abs_v >= 1_000_000_000:
+            return f"{v / 1_000_000_000:.1f}G"
+        if abs_v >= 1_000_000:
+            return f"{v / 1_000_000:.1f}M"
+        if abs_v >= 10_000:
+            return f"{v / 1_000:.1f}K"
+        if v == int(v):
+            return f"{int(v):,}"
+        if abs_v < 0.01:
+            return f"{v:.4f}"
+        return f"{v:.2f}"
+    return str(value)
 
 
 def print_formatted(records, title=None):
-    """Pretty-print records as a grouped table to stdout."""
+    """Pretty-print records as a summary table to stdout.
+
+    Shows one row per metric with Count, Min, Max, Avg and Latest values
+    so the output always fits within a normal terminal width.
+    """
     if not records:
         print("  No records to display.\n")
         return
@@ -259,7 +274,6 @@ def print_formatted(records, title=None):
     for res in resources:
         db_label = short_resource(res)
         print(f"\n  Database: {db_label}")
-        print(f"  {'─' * 76}")
 
         # Group records by metric name for this resource
         by_metric = defaultdict(list)
@@ -267,40 +281,64 @@ def print_formatted(records, title=None):
             if r.get("resourceId", "") == res:
                 by_metric[r["metricName"]].append(r)
 
-        # Collect all timestamps
-        all_times = sorted({r["time"] for r in records if r.get("resourceId") == res})
+        # Collect all timestamps for time-range display
+        all_times = sorted(
+            {r["time"] for r in records if r.get("resourceId") == res}
+        )
+        if all_times:
+            def _fmt_time(t):
+                try:
+                    dt = datetime.fromisoformat(t.replace("Z", "+00:00"))
+                    return dt.strftime("%H:%M")
+                except Exception:
+                    return t[:16]
 
-        # Header
-        time_labels = []
-        for t in all_times:
-            try:
-                dt = datetime.fromisoformat(t.replace("Z", "+00:00"))
-                time_labels.append(dt.strftime("%H:%M"))
-            except Exception:
-                time_labels.append(t[:16])
+            print(f"  Time range: {_fmt_time(all_times[0])} – "
+                  f"{_fmt_time(all_times[-1])}  "
+                  f"({len(all_times)} sample(s))")
 
-        metric_col_w = 40
-        val_col_w = 12
-        header = f"  {'Metric':<{metric_col_w}}"
-        for tl in time_labels:
-            header += f"{'Avg @' + tl:>{val_col_w}}"
-        print(header)
-        print(f"  {'─' * metric_col_w}" + f"{'─' * val_col_w}" * len(time_labels))
+        metric_col = 36
+        num_col = 8
+        hdr = (f"  {'Metric':<{metric_col}}"
+               f"{'Count':>{num_col}}"
+               f"{'Min':>{num_col}}"
+               f"{'Max':>{num_col}}"
+               f"{'Avg':>{num_col}}"
+               f"{'Latest':>{num_col}}")
+        sep = f"  {'─' * (metric_col + num_col * 5)}"
+        print(sep)
+        print(hdr)
+        print(sep)
 
         for metric_name in sorted(by_metric):
             desc = METRIC_DESCRIPTIONS.get(metric_name, metric_name)
             label = f"{desc} ({metric_name})"
-            if len(label) > metric_col_w:
-                label = label[: metric_col_w - 1] + "…"
+            if len(label) > metric_col:
+                label = label[: metric_col - 1] + "…"
 
-            # Build a time→average map
-            time_map = {}
-            for r in by_metric[metric_name]:
-                time_map[r["time"]] = r.get("average")
+            values = [
+                r.get("average")
+                for r in by_metric[metric_name]
+                if r.get("average") is not None
+            ]
 
-            row = f"  {label:<{metric_col_w}}"
-            for t in all_times:
-                row += f"{format_value(time_map.get(t)):>{val_col_w}}"
+            count = len(by_metric[metric_name])
+            if values:
+                v_min = min(values)
+                v_max = max(values)
+                v_avg = sum(values) / len(values)
+                # Latest = value from the most recent timestamp
+                latest_rec = max(by_metric[metric_name], key=lambda r: r["time"])
+                v_latest = latest_rec.get("average")
+            else:
+                v_min = v_max = v_avg = v_latest = None
+
+            row = (f"  {label:<{metric_col}}"
+                   f"{format_value(count):>{num_col}}"
+                   f"{format_value(v_min):>{num_col}}"
+                   f"{format_value(v_max):>{num_col}}"
+                   f"{format_value(v_avg):>{num_col}}"
+                   f"{format_value(v_latest):>{num_col}}")
             print(row)
 
     print()
