@@ -264,6 +264,7 @@ az deployment group create \
 
 - SQL authentication is disabled (`azureADOnlyAuthentication = true`).
 - Default diagnostic metric category is `Basic`. Change via the `metricCategories` parameter.
+- `InstanceAndAppAdvanced` metrics are not available on Basic and Standard `S0`, `S1`, and `S2` service objectives. See: https://learn.microsoft.com/en-us/azure/azure-sql/database/resource-limits-logical-server?view=azuresql#resource-consumption-by-user-workloads-and-internal-processes
 - Event Hub resources are created and wired automatically by the template.
 
 ## Troubleshooting
